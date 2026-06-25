@@ -1,0 +1,47 @@
+# Environment — never commit real secrets
+.env
+*.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# Node / React
+node_modules/
+frontend/build/
+frontend/.env.local
+frontend/.env.production
+
+# Docker volumes (local dev)
+postgres/data/
+redis/data/
+chroma/data/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Alembic — keep migrations, ignore local override
+backend/app/db/migrations/versions/*.pyc
