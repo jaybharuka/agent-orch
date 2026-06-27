@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert
 
 from app.db.session import async_session
 from app.models.memory import MemoryEntry as MemoryEntryModel
@@ -80,20 +81,27 @@ class PostgresMemoryStore:
 
         async with async_session() as session:
             try:
-                task = Task(
-                    id=task_uuid,
-                    session_id=user_uuid,
-                    user_id=user_uuid,
-                    description=description,
-                    status=status,
-                    plan_json=plan_json,
-                    final_output=final_output,
-                    confidence_score=confidence_score,
-                    reviewer_score=reviewer_score,
-                    duration_ms=duration_ms,
-                    cost_usd=cost_usd,
+                stmt = (
+                    insert(Task)
+                    .values(
+                        id=task_uuid,
+                        session_id=user_uuid,
+                        user_id=user_uuid,
+                        description=description,
+                        status=status,
+                        plan_json=plan_json,
+                        final_output=final_output,
+                        confidence_score=confidence_score,
+                        reviewer_score=reviewer_score,
+                        duration_ms=duration_ms,
+                        cost_usd=cost_usd,
+                    )
+                    .on_conflict_do_update(
+                        index_elements=["id"],
+                        set_={"status": status, "plan_json": plan_json},
+                    )
                 )
-                session.add(task)
+                await session.execute(stmt)
                 await session.commit()
                 return task_uuid
             except Exception as exc:
