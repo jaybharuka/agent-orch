@@ -55,21 +55,31 @@ class EscalationService:
     @staticmethod
     def _snapshot_state(state: dict[str, Any]) -> dict[str, Any]:
         """Return a JSON-safe copy of the AgentState without non-serializable objects."""
+        def _serialize(value: Any) -> Any:
+            if hasattr(value, "model_dump"):
+                return value.model_dump()
+            if hasattr(value, "dict"):
+                return value.dict()
+            if isinstance(value, list):
+                return [_serialize(item) for item in value]
+            if isinstance(value, dict):
+                return {k: _serialize(v) for k, v in value.items()}
+            return value
+
         snapshot = dict(state)
         snapshot.pop("memory_manager", None)
         snapshot.pop("escalation_service", None)
-        for key, value in snapshot.items():
-            if hasattr(value, "model_dump"):
-                snapshot[key] = value.model_dump()
-            elif hasattr(value, "dict"):
-                snapshot[key] = value.dict()
-        return snapshot
+        return {k: _serialize(v) for k, v in snapshot.items()}
 
     @staticmethod
     def _to_uuid(value: Any) -> UUID:
         if isinstance(value, UUID):
             return value
-        return UUID(str(value))
+        try:
+            return UUID(str(value))
+        except ValueError:
+            # Non-UUID string (e.g. "demo-user") → deterministic namespace UUID
+            return uuid.uuid5(uuid.NAMESPACE_OID, str(value))
 
     async def escalate(
         self,

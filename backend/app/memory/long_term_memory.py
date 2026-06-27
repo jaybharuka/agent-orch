@@ -8,7 +8,6 @@ from math import exp
 from typing import Any
 
 import chromadb
-from sentence_transformers import SentenceTransformer
 
 from app.config import settings
 
@@ -40,32 +39,33 @@ class MemoryEntry:
     importance_score: float
 
 
-class _MiniLMEmbeddingFunction:
-    """ChromaDB-compatible embedding function using all-MiniLM-L6-v2."""
-
-    def __init__(self) -> None:
-        self._model: SentenceTransformer | None = None
-
-    def __call__(self, input: list[str]) -> list[list[float]]:
-        if self._model is None:
-            self._model = SentenceTransformer(EMBEDDING_MODEL)
-        embeddings = self._model.encode(input, show_progress_bar=False)
-        return embeddings.tolist()
-
-
 class LongTermMemory:
     """Async ChromaDB-backed semantic memory for tasks and facts."""
 
     def __init__(self) -> None:
         self._chroma_url = settings.chroma_url
         self._client: ChromaClient | None = None
-        self._embedding_function = _MiniLMEmbeddingFunction()
+        self._embedding_function = None  # lazy — loaded on first collection access
+
+    def _get_embedding_function(self):
+        """Return the SentenceTransformerEmbeddingFunction, loading it once on demand."""
+        if self._embedding_function is None:
+            from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
+            self._embedding_function = SentenceTransformerEmbeddingFunction(
+                model_name=EMBEDDING_MODEL
+            )
+        return self._embedding_function
 
     def _get_client(self) -> ChromaClient:
         """Return a connected ChromaDB HTTP client."""
         if self._client is None:
             try:
-                self._client = chromadb.HttpClient(host=self._chroma_url)
+                from urllib.parse import urlparse
+                parsed = urlparse(self._chroma_url)
+                host = parsed.hostname or "localhost"
+                port = parsed.port or 8000
+                ssl = parsed.scheme == "https"
+                self._client = chromadb.HttpClient(host=host, port=port, ssl=ssl)
             except Exception as exc:
                 raise LongTermMemoryError(
                     f"Failed to connect to ChromaDB long-term memory at {self._chroma_url}. "
@@ -79,7 +79,7 @@ class LongTermMemory:
         try:
             return client.get_or_create_collection(
                 name=name,
-                embedding_function=self._embedding_function,
+                embedding_function=self._get_embedding_function(),
             )
         except Exception as exc:
             raise LongTermMemoryError(

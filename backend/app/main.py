@@ -27,6 +27,8 @@ async def lifespan(app: FastAPI):
     )
     yield
     await app.state.memory_manager.close()
+    from app.db.session import engine
+    await engine.dispose()
 
 
 app = FastAPI(
