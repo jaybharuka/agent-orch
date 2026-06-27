@@ -28,6 +28,8 @@ def _route_supervisor(state: AgentState) -> str:
 
 def _route_execution(state: AgentState) -> str:
     """Route to the next specialist node based on the current subtask."""
+    if state.get("escalation_required"):
+        return "escalate"
     plan = state["execution_plan"]
     index = state["current_subtask_index"]
     if index >= len(plan):
@@ -48,7 +50,7 @@ def _route_reviewer(state: AgentState) -> str:
 
 def _execute_passthrough(state: AgentState) -> AgentState:
     """Passthrough node used as the execution router entry point."""
-    return {}
+    return {"status": state["status"]}
 
 
 def _derive_escalation_trigger(state: AgentState) -> str:
@@ -165,8 +167,24 @@ async def _escalate_node(state: AgentState) -> AgentState:
                 "agent_outputs": {},
                 "retry_counts": {},
             }
+        # Advance past the current subtask so it doesn't re-trigger escalation.
+        plan = list(state.get("execution_plan", []))
+        idx = state.get("current_subtask_index", 0)
+        agent_outputs = dict(state.get("agent_outputs", {}))
+        if idx < len(plan):
+            subtask = plan[idx]
+            subtask.status = "complete"
+            subtask.output = f"[Human-approved] {subtask.description}"
+            agent_outputs[subtask.id] = subtask.output
+            idx += 1
         await publish_status(state["user_id"], state["task_id"], "executing")
-        return {"status": "executing", "escalation_required": False}
+        return {
+            "status": "executing",
+            "escalation_required": False,
+            "execution_plan": plan,
+            "current_subtask_index": idx,
+            "agent_outputs": agent_outputs,
+        }
 
     if decision == "reject":
         resolved = await escalation_service.get_by_id(request.id)
@@ -204,31 +222,19 @@ def build_agent_graph():
         _route_supervisor,
         {"execute": "execute", "escalate": "escalate"},
     )
-    builder.add_conditional_edges(
-        "execute",
-        _route_execution,
-        {
-            "research": "research",
-            "data_analysis": "data_analysis",
-            "writing": "writing",
-            "code": "code",
-            "review": "reviewer",
-        },
-    )
+    _execution_routes = {
+        "research": "research",
+        "data_analysis": "data_analysis",
+        "writing": "writing",
+        "code": "code",
+        "review": "reviewer",
+        "escalate": "escalate",
+    }
+    builder.add_conditional_edges("execute", _route_execution, _execution_routes)
 
     # After each specialist node, route back to the execution router.
     for agent_type in SPECIALIST_AGENTS:
-        builder.add_conditional_edges(
-            agent_type,
-            _route_execution,
-            {
-                "research": "research",
-                "data_analysis": "data_analysis",
-                "writing": "writing",
-                "code": "code",
-                "review": "reviewer",
-            },
-        )
+        builder.add_conditional_edges(agent_type, _route_execution, _execution_routes)
 
     builder.add_conditional_edges(
         "reviewer",

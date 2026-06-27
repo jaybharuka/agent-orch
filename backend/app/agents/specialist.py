@@ -194,6 +194,7 @@ async def specialist_node(state: AgentState, agent_type: str) -> AgentState:
             escalation_required = True
             escalation_reason = "repeated_failure"
             escalation_trigger = "repeated_failure"
+            index += 1  # must advance so _route_execution doesn't loop on the same subtask
         else:
             try:
                 output = await _run_react_loop(subtask, agent_type, state)
