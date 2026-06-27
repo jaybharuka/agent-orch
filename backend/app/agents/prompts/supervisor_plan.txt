@@ -19,4 +19,4 @@ Instructions:
 - "dependencies" is a list of subtask ids that must complete before this subtask.
 - Ensure every dependency references an existing subtask id.
 - Ensure the plan collectively covers the full task.
-- Return ONLY a valid JSON object with the shape: {"subtasks": [...]}
+- Return ONLY a valid JSON object with the shape: {{"subtasks": [...]}}
