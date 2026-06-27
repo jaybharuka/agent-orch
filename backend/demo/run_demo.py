@@ -70,11 +70,13 @@ async def create_task(client: httpx.AsyncClient, session_id: str) -> str:
     return task_id
 
 
-async def wait_for_human_approval(escalation_event: asyncio.Event) -> None:
+async def wait_for_human_approval(
+    escalation_event: asyncio.Event, task_id: str, started_at: float
+) -> None:
     """
-    Polls /reviews/pending every 3 seconds. When an escalation appears, prints
-    a prompt and waits for a human to approve it via the UI. Stops once every
-    pending request has been resolved (no longer pending).
+    Polls /reviews/pending every 3 seconds. Only shows escalations that belong
+    to the current task (filters by task_id or creation time to ignore stale
+    requests from previous runs). Waits for a human to approve via the UI.
     """
     notified: set[str] = set()
     deadline = time.time() + HUMAN_APPROVAL_TIMEOUT
@@ -86,11 +88,25 @@ async def wait_for_human_approval(escalation_event: asyncio.Event) -> None:
                 resp = await client.get(f"{API_BASE}/api/v1/reviews/pending")
                 if resp.status_code != 200:
                     continue
-                pending = resp.json()
+                all_pending = resp.json()
             except Exception:
                 continue
 
-            for item in pending:
+            # Filter to only escalations created after this run started.
+            pending = [
+                item for item in all_pending
+                if item.get("task_id") == task_id
+                or (item.get("created_at", "") > datetime.utcfromtimestamp(started_at).strftime("%Y-%m-%d"))
+            ]
+            # Further narrow: skip anything obviously old (created before this run).
+            current_pending = [
+                item for item in all_pending
+                if item.get("task_id") == task_id
+            ]
+            if not current_pending:
+                current_pending = pending  # fallback: show all if task_id not stored
+
+            for item in current_pending:
                 rid = item.get("id", "")
                 if rid and rid not in notified:
                     notified.add(rid)
@@ -103,14 +119,14 @@ async def wait_for_human_approval(escalation_event: asyncio.Event) -> None:
                     print("    it in the Review Queue tab. Waiting up to 5 minutes...", flush=True)
                     print(flush=True)
 
-            # Check if all notified requests are resolved.
-            if notified and not pending:
-                print("  ✓ All escalations resolved — workflow resuming.")
+            # Stop once all current-task escalations are resolved.
+            if notified and not current_pending:
+                print("  ✓ All escalations resolved — workflow resuming.", flush=True)
                 escalation_event.set()
                 return
 
             if time.time() > deadline:
-                print("  ✗ Timed out waiting for human approval (5 min).")
+                print("  ✗ Timed out waiting for human approval (5 min).", flush=True)
                 escalation_event.set()
                 return
 
@@ -186,10 +202,12 @@ async def main() -> None:
     print(f"\n⟳  Running agent workflow (NVIDIA NIM · llama-3.1-70b)…")
     print("   Watch http://localhost:3000 for real-time status updates.\n")
 
-    escalation_event = asyncio.Event()
-    watcher = asyncio.create_task(wait_for_human_approval(escalation_event))
-
     t0 = time.time()
+    escalation_event = asyncio.Event()
+    watcher = asyncio.create_task(
+        wait_for_human_approval(escalation_event, task_id, started_at=t0)
+    )
+
     final_state = await invoke_workflow(task_id, session_id)
     elapsed = time.time() - t0
 

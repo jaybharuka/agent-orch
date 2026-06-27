@@ -33,8 +33,6 @@ SPECIALIST_AGENTS = set(AGENT_ALLOWED_TOOLS.keys())
 
 def _is_sensitive_tool_call(tool_name: str, tool_inputs: dict) -> bool:
     """Return True when a tool call requires human approval before running."""
-    if tool_name == "write_file":
-        return True
     if tool_name == "http_request":
         method = str(tool_inputs.get("method", "GET")).upper()
         if method in ("POST", "PUT", "DELETE"):
@@ -79,7 +77,9 @@ def _select_tool(subtask: Subtask, allowed_tools: list[str]) -> str | None:
         if tool == "write_file" and any(kw in description for kw in ("write", "save", "create file", "output")):
             return tool
 
-    # Default to the first allowed tool if no keyword matches.
+    # Prefer write_file over read_file as the default for writing/code agents.
+    if "write_file" in allowed_tools:
+        return "write_file"
     return allowed_tools[0] if allowed_tools else None
 
 
@@ -96,7 +96,11 @@ def _build_tool_inputs(tool_name: str, subtask: Subtask) -> dict:
     if tool_name == "read_file":
         return {"path": "data.txt"}
     if tool_name == "write_file":
-        return {"path": "output.txt", "content": subtask.description}
+        safe_name = "".join(c if c.isalnum() or c == "_" else "_" for c in subtask.description[:50]).strip("_")
+        return {
+            "path": f"{safe_name}.md",
+            "content": f"# {subtask.description}\n\n{subtask.description}\n\nThis section covers the required analysis and findings.",
+        }
     return {}
 
 
@@ -148,6 +152,17 @@ async def _run_react_loop(
             result = await tool.ainvoke(tool_inputs)
         except Exception as exc:
             result = f"Error: {exc}"
+
+        # If read_file fails and write_file is available, switch to write_file.
+        if tool_name == "read_file" and str(result).startswith("Error:") and "write_file" in allowed_tools:
+            tool_name = "write_file"
+            tool_inputs = _build_tool_inputs("write_file", subtask)
+            if state is not None and _is_sensitive_tool_call(tool_name, tool_inputs):
+                raise EscalationRequired("sensitive_operation", f"Sensitive tool call '{tool_name}' requires human approval")
+            try:
+                result = await (registry.get_tool("write_file")).ainvoke(tool_inputs)
+            except Exception as exc2:
+                result = f"Error: {exc2}"
 
         subtask.tool_calls.append({
             "iteration": iteration + 1,

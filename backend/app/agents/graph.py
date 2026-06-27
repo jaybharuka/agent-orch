@@ -48,6 +48,13 @@ def _route_reviewer(state: AgentState) -> str:
     return "complete"
 
 
+def _route_escalate(state: AgentState) -> str:
+    """After escalation: resume execution on approve, end on reject/timeout."""
+    if state.get("status") == "executing" and not state.get("escalation_required"):
+        return "execute"
+    return "end"
+
+
 def _execute_passthrough(state: AgentState) -> AgentState:
     """Passthrough node used as the execution router entry point."""
     return {"status": state["status"]}
@@ -241,7 +248,11 @@ def build_agent_graph():
         _route_reviewer,
         {"complete": END, "revise": "execute", "escalate": "escalate"},
     )
-    builder.add_edge("escalate", END)
+    builder.add_conditional_edges(
+        "escalate",
+        _route_escalate,
+        {"execute": "execute", "end": END},
+    )
 
     return builder.compile()
 
